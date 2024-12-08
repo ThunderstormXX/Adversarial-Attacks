@@ -5,7 +5,7 @@ class FGSM():
     def __init__(self, model = None):
         self.model = model
 
-    def init_model(self, model):
+    def init_params(self, model):
         self.model = model
 
     def fgsm_attack(self, img, eps, data_grad):
