@@ -3,6 +3,8 @@ from torchvision import transforms,datasets
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import torch.nn.functional as F
+
 def MNIST():
     # Загрузка и подготовка данных
     transform = transforms.Compose([
@@ -98,3 +100,37 @@ def train(model, opt, train_loader, test_loader, criterion, n_epochs, \
                      train_loss, val_loss, train_acc, val_acc))
 
     return train_log, train_acc_log, val_log, val_acc_log
+
+
+def train_epoch_adv(model, pi, attacks, optimizer, train_loader, criterion, device, tau=1):
+    model.train()
+    pi_array = []
+    for traindata in tqdm(train_loader):
+        train_inputs, train_labels = traindata
+        train_inputs = train_inputs.to(device) 
+        train_labels = train_labels.to(device)
+        train_labels = torch.squeeze(train_labels)
+
+        model.zero_grad()        
+        all_inputs = []
+        for attack in attacks:
+            all_inputs.append(attack(train_inputs, train_labels))
+
+        all_outputs = []
+        for input in all_inputs:
+            all_outputs.append(model(input))
+
+        all_losses = []
+        for output in all_outputs:
+            all_losses.append(criterion(output, train_labels.long()))
+
+        full_loss = 0
+        for i in range(len(all_losses)):
+            full_loss += all_losses[i] * pi[i]
+
+        full_loss.backward()
+        optimizer.step()
+
+        pi = F.softmax( torch.tensor([loss*tau for loss in all_losses]))
+        pi_array.append(pi)
+    return pi, pi_array
