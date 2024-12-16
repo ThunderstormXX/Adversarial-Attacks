@@ -13,7 +13,7 @@ class RandomTransform():
         self.noise_std = noise_std
 
     def random_rotate(self, img):
-        # Генерация случайного угла для поворота
+        # Генерация случайного угла для поврота
         angle = random.uniform(self.rotation_range[0], self.rotation_range[1])
         rotate_transform = transforms.Compose([
             transforms.ToPILImage(),

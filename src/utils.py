@@ -2,6 +2,7 @@ import torch
 from torchvision import transforms,datasets
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import numpy as np
 
 import torch.nn.functional as F
 
@@ -107,19 +108,20 @@ def train_epoch_adv(model, pi, attacks, optimizer, train_loader, criterion, devi
     pi_array = []
     for traindata in tqdm(train_loader):
         train_inputs, train_labels = traindata
-        train_inputs = train_inputs.to(device) 
-        train_labels = train_labels.to(device)
         train_labels = torch.squeeze(train_labels)
 
         model.zero_grad()        
         all_inputs = []
         for attack in attacks:
+            # print(train_inputs.device , train_labels.device)
             all_inputs.append(attack(train_inputs, train_labels))
 
         all_outputs = []
         for input in all_inputs:
+            input = input.to(device)
             all_outputs.append(model(input))
 
+        train_labels = train_labels.to(device)
         all_losses = []
         for output in all_outputs:
             all_losses.append(criterion(output, train_labels.long()))
@@ -134,3 +136,88 @@ def train_epoch_adv(model, pi, attacks, optimizer, train_loader, criterion, devi
         pi = F.softmax( torch.tensor([loss*tau for loss in all_losses]))
         pi_array.append(pi)
     return pi, pi_array
+
+def train_epoch_adv_v2(model, pi, attacks, optimizer, train_loader, criterion, device, tau=1):
+    model.train()
+    pi_array = []
+    all_losses = torch.zeros_like(pi)
+
+    for traindata in tqdm(train_loader):
+        train_inputs, train_labels = traindata
+        train_labels = torch.squeeze(train_labels)
+
+        model.zero_grad()        
+
+        probs = pi.clone().detach().numpy()
+        ind_attack = np.random.choice(range(len(attacks)) , p=probs)
+        attack = attacks[ind_attack]
+        input = attack(train_inputs, train_labels)
+        input = input.to(device)
+
+        output = model(input)
+
+        train_labels = train_labels.to(device)
+        loss = criterion(output, train_labels.long())
+        loss.backward()
+        optimizer.step()
+
+        all_losses[ind_attack] = loss
+        if torch.all(all_losses != 0):
+            # print(all_losses)
+            # print(pi)
+            # raise Exception('TEST')
+            pi = F.softmax( torch.log(pi) * all_losses * tau )
+            pi_array.append(pi)
+    return pi, pi_array, all_losses
+
+def train_epoch_default(model, attacks, optimizer, train_loader, criterion, device):
+    model.train()
+ 
+    for traindata in tqdm(train_loader):
+        train_inputs, train_labels = traindata
+        train_labels = torch.squeeze(train_labels)
+
+        model.zero_grad()        
+
+        ind_attack = np.random.choice(range(len(attacks)) )
+        attack = attacks[ind_attack]
+        input = attack(train_inputs, train_labels)
+        input = input.to(device)
+
+        output = model(input)
+
+        train_labels = train_labels.to(device)
+        loss = criterion(output, train_labels.long())
+        loss.backward()
+        optimizer.step()
+    return loss
+
+def test_epoch_adv(model, attacks, train_loader, device):
+    model.eval()
+    total_acc = 0.0
+    total = 0.0
+    
+    for traindata in tqdm(train_loader):
+        train_inputs, train_labels = traindata
+        train_labels = torch.squeeze(train_labels)
+
+        model.zero_grad()        
+        all_inputs = []
+        for attack in attacks:
+            all_inputs.append(attack(train_inputs, train_labels))
+
+        all_outputs = []
+        for input in all_inputs:
+            input = input.to(device)
+            all_outputs.append(model(input))
+
+        train_labels = train_labels.to(device)
+        
+        for output in all_outputs:
+            pred = output.argmax(dim=1)
+            correct = pred == train_labels.byte()
+            total_acc += torch.sum(correct).item() / len(correct)
+
+        total = total + 1
+    return total_acc / total / len(attacks)
+    
