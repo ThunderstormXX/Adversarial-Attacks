@@ -137,11 +137,13 @@ def train_epoch_adv(model, pi, attacks, optimizer, train_loader, criterion, devi
         pi_array.append(pi)
     return pi, pi_array
 
-def train_epoch_adv_v2(model, pi, attacks, optimizer, train_loader, criterion, device, tau=1):
+def train_epoch_adv_v2(model, pi, attacks, optimizer, train_loader, criterion, device, tau=1, init_losses = None):
     model.train()
     pi_array = []
-    all_losses = torch.zeros_like(pi)
-
+    if init_losses is None:
+        all_losses = torch.zeros_like(pi)
+    else:
+        all_losses = init_losses
     for traindata in tqdm(train_loader):
         train_inputs, train_labels = traindata
         train_labels = torch.squeeze(train_labels)
