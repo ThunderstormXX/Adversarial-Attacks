@@ -172,6 +172,52 @@ def train_epoch_adv_v2(model, pi, attacks, optimizer, train_loader, criterion, d
             pi_array.append(pi)
     return pi, pi_array, all_losses
 
+def train_epoch_adv_v3(model, pi, attacks, optimizer, train_loader, criterion, device, tau=1,gamma = 1, init_losses = None, default = False):
+    model.train()
+    pi_array = []
+    losses_array = []
+    if init_losses is None:
+        all_losses = torch.zeros_like(pi)
+    else:
+        all_losses = init_losses
+
+    for traindata in tqdm(train_loader):
+        train_inputs, train_labels = traindata
+        train_labels = torch.squeeze(train_labels)
+
+        model.zero_grad()        
+        if default is True:
+            probs = np.ones(len(pi)) / len(pi)
+        else:
+            probs = pi.clone().detach().numpy()
+
+        ind_attack = np.random.choice(range(len(attacks)) , p=probs)
+        attack = attacks[ind_attack]
+        input = attack(train_inputs, train_labels)
+        input = input.to(device)
+
+        output = model(input)
+
+        train_labels = train_labels.to(device)
+        loss = criterion(output, train_labels.long())
+        loss.backward()
+        optimizer.step()
+
+        all_losses[ind_attack] = loss
+        if torch.all(all_losses != 0):
+            # print(all_losses)
+            # print(pi)
+            # raise Exception('TEST')
+            pi = F.softmax( (torch.log(pi) - gamma * all_losses) / (1 + gamma * tau) - 1 )
+            pi_array.append(pi)
+            losses_array.append(all_losses)
+        logs = dict(
+            pi_array = pi_array, 
+            loss_array = losses_array, 
+        )
+    return pi, logs
+
+
 def train_epoch_default(model, attacks, optimizer, train_loader, criterion, device):
     model.train()
  
