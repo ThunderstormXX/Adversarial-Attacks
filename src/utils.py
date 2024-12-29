@@ -242,7 +242,7 @@ def train_epoch_default(model, attacks, optimizer, train_loader, criterion, devi
 
 def test_epoch_adv(model, attacks, train_loader, device):
     model.eval()
-    total_acc = 0.0
+    total_acc = np.zeros(len(attacks))
     total = 0.0
     
     for traindata in tqdm(train_loader):
@@ -261,11 +261,10 @@ def test_epoch_adv(model, attacks, train_loader, device):
 
         train_labels = train_labels.to(device)
         
-        for output in all_outputs:
+        for e, output in enumerate(all_outputs):
             pred = output.argmax(dim=1)
             correct = pred == train_labels.byte()
-            total_acc += torch.sum(correct).item() / len(correct)
+            total_acc[e] += torch.sum(correct).item() / len(correct)
 
         total = total + 1
-    return total_acc / total / len(attacks)
-    
+    return total_acc / total 
