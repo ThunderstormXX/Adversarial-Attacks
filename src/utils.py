@@ -203,18 +203,19 @@ def train_epoch_adv_v3(model, pi, attacks, optimizer, train_loader, criterion, d
         loss.backward()
         optimizer.step()
 
-        all_losses[ind_attack] = loss
+        # print(ind_attack , loss)
+        # print(all_losses)
+        all_losses[ind_attack] = loss.clone()
+        # print(all_losses)
         if torch.all(all_losses != 0):
-            # print(all_losses)
-            # print(pi)
-            # raise Exception('TEST')
-            pi = F.softmax( (torch.log(pi) - gamma * all_losses) / (1 + gamma * tau) - 1 )
+            pi = F.softmax( (torch.log(pi) + gamma * all_losses) / (1 + gamma * tau) - 1 )
             pi_array.append(pi)
-            losses_array.append(all_losses)
-        logs = dict(
-            pi_array = pi_array, 
-            loss_array = losses_array, 
-        )
+            losses_array.append(all_losses.clone())
+    
+    logs = dict(
+        pi_array = pi_array, 
+        loss_array = losses_array, 
+    )
     return pi, logs
 
 
