@@ -172,7 +172,12 @@ def train_epoch_adv_v2(model, pi, attacks, optimizer, train_loader, criterion, d
             pi_array.append(pi)
     return pi, pi_array, all_losses
 
-def train_epoch_adv_v3(model, pi, attacks, optimizer, train_loader, criterion, device, tau=1,gamma = 1, init_losses = None, default = False):
+def train_epoch_adv_v3(model, pi, attacks, optimizer, train_loader, criterion, device, tau=1,gamma = 1, init_losses = None, default = False, seed = None):
+    if seed is not None:
+        np.random.seed(seed)  # Установка seed для NumPy
+        torch.manual_seed(seed)  # Установка seed для PyTorch
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)  # Установка seed для всех GPU, если использу
     model.train()
     pi_array = []
     losses_array = []
