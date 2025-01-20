@@ -22,6 +22,23 @@ def MNIST():
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
     return train_dataset, test_dataset, train_loader, test_loader
 
+class MNISTWithIndices(datasets.MNIST):
+    def __getitem__(self, index):
+        img, target = super(MNISTWithIndices, self).__getitem__(index)
+        return img, target, index
+
+def MNIST_v2():
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+    ])
+    
+    train_dataset = MNISTWithIndices(root='./data', train=True, download=True, transform=transform)
+    test_dataset = MNISTWithIndices(root='./data', train=False, download=True, transform=transform)
+
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+    return train_dataset, test_dataset, train_loader, test_loader
+
 
 # Обучение модели
 def train_model(model, train_loader, criterion, optimizer, num_epochs=10, device='cpu'):
@@ -223,6 +240,52 @@ def train_epoch_adv_v3(model, pi, attacks, optimizer, train_loader, criterion, d
     )
     return pi, logs
 
+def adversarial_loss_fn(x,y,weights, loss_fn):
+    return loss_fn(x,y , reduction='none').mul(weights).sum()
+
+def train_epoch_adv_v4(model, pi, optimizer, train_loader, criterion, device, tau=1,gamma = 1, init_losses = None, default = False, seed = None):
+    if seed is not None:
+        np.random.seed(seed)  # Установка seed для NumPy
+        torch.manual_seed(seed)  # Установка seed для PyTorch
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)  # Установка seed для всех GPU, если использу
+    model.train()
+
+    # losses_array = []
+    if init_losses is None:
+        all_losses = torch.zeros_like(pi)
+    else:
+        all_losses = init_losses
+
+    for traindata in tqdm(train_loader):
+        train_inputs, train_labels, train_indices = traindata
+        train_labels = torch.squeeze(train_labels)
+
+        model.zero_grad()        
+        input = train_inputs.to(device)
+        train_labels = train_labels.to(device)
+        
+        output = model(input)
+        
+        weights = pi[train_indices]
+        loss_default = criterion( output.float(),train_labels.long(), reduction='none')
+        if default is True:
+            loss = loss_default.sum()
+        else:
+            loss = loss_default.mul(weights).sum()
+        loss.backward()
+        optimizer.step()
+
+        all_losses[train_indices] = loss_default.detach().clone().sum()
+
+        pi = F.softmax( (torch.log(pi) + gamma * all_losses) / (1 + gamma * tau) - 1 )
+        # losses_array.append(all_losses.clone().detach().numpy())
+    
+    logs = dict(
+        all_losses = all_losses,
+        pi = pi  
+    )
+    return logs
 
 def train_epoch_default(model, attacks, optimizer, train_loader, criterion, device):
     model.train()
@@ -271,6 +334,30 @@ def test_epoch_adv(model, attacks, train_loader, device):
             pred = output.argmax(dim=1)
             correct = pred == train_labels.byte()
             total_acc[e] += torch.sum(correct).item() / len(correct)
+
+        total = total + 1
+    return total_acc / total 
+
+
+def test_epoch(model,train_loader, device):
+    model.eval()
+    total_acc = 0.0
+    total = 0.0
+    
+    for traindata in tqdm(train_loader):
+        train_inputs, train_labels, indices = traindata
+        train_labels = torch.squeeze(train_labels)
+
+        train_inputs = train_inputs.to(device)
+        train_labels = train_labels.to(device)
+
+        model.zero_grad()        
+    
+        outputs = model(train_inputs)
+        
+        pred = outputs.argmax(dim=1)
+        correct = pred == train_labels.byte()
+        total_acc += torch.sum(correct).item() / len(correct)
 
         total = total + 1
     return total_acc / total 
