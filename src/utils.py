@@ -1,6 +1,6 @@
 import torch
 from torchvision import transforms,datasets
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import numpy as np
 
@@ -38,6 +38,99 @@ def MNIST_v2():
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
     return train_dataset, test_dataset, train_loader, test_loader
+
+class FakeLabelMNIST(MNISTWithIndices):
+    def __init__(self, *args, p=0.1, **kwargs):
+        super(FakeLabelMNIST, self).__init__(*args, **kwargs)
+        self.p = p
+        self.fake_indices = set()
+        self.num_classes = 10  # Для MNIST, 10 классов
+
+        # Подмена лейблов при инициализации
+        self.targets = self._modify_labels()
+
+    def _modify_labels(self):
+        for idx in range(len(self.targets)):
+            if np.random.rand() < self.p:
+                original_label = self.targets[idx]
+                fake_label = (original_label + np.random.randint(1, self.num_classes)) % self.num_classes
+                self.targets[idx] = fake_label
+                self.fake_indices.add(idx)
+        return self.targets
+
+    def __getitem__(self, index):
+        img, target = super(MNISTWithIndices, self).__getitem__(index)
+        if index in self.fake_indices:
+            return img, target, index, True  # Добавляем флаг, что лейбл фейковый
+        return img, target, index, False
+
+    def get_fake_indices(self):
+        return self.fake_indices
+
+    def filter_indices(self, indices_to_remove):
+        """
+        Удаляет указанные индексы из датасета и обновляет внутреннюю индексацию.
+        """
+        # Создаем список оставшихся индексов
+        remaining_indices = list(set(range(len(self.targets))) - set(indices_to_remove))
+
+        # Обновляем targets
+        self.targets = [self.targets[i] for i in remaining_indices]
+
+        # Обновляем данные
+        if hasattr(self, 'data'):
+            self.data = self.data[remaining_indices]
+
+        # Пересчитываем fake_indices для нового датасета
+        self.fake_indices = {new_idx for new_idx, old_idx in enumerate(remaining_indices)
+                             if old_idx in self.fake_indices}
+
+
+def MNIST_v3_fake(p = 0.1):
+    """ Fake labels only in train dataset"""
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+    ])
+    
+    train_dataset = FakeLabelMNIST(root='./data', train=True, download=True, transform=transform, p=p)
+    test_dataset = MNISTWithIndices(root='./data', train=False, download=True, transform=transform)
+
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+    return train_dataset, test_dataset, train_loader, test_loader
+
+# # Функция для уменьшения датасета
+# def filter_dataset(dataset, indices_to_remove):
+#     # Получаем оставшиеся индексы
+#     remaining_indices = list(set(range(len(dataset))) - set(indices_to_remove))
+#     # Создаем Subset с этими индексами
+#     subset = Subset(dataset, remaining_indices)
+#     return subset
+
+# # Функция для фильтрации датасета
+# def filter_fake_label_mnist(dataset, indices_to_remove):
+#     """
+#     Фильтрует датасет, удаляя указанные индексы, и обновляет fake_indices.
+#     """
+#     # Получаем оставшиеся индексы
+#     remaining_indices = list(set(range(len(dataset))) - set(indices_to_remove))
+
+#     # Создаем Subset из оставшихся индексов
+#     subset = Subset(dataset, remaining_indices)
+
+#     # Обновляем fake_indices в соответствии с новой индексацией
+#     new_fake_indices = {i for i in range(len(remaining_indices)) if remaining_indices[i] in dataset.fake_indices}
+
+#     # Создаем новый класс с обновленными fake_indices
+#     class FilteredFakeLabelMNIST(Subset):
+#         def __init__(self, subset, fake_indices):
+#             super().__init__(subset.dataset, subset.indices)
+#             self.fake_indices = fake_indices
+
+#         def get_fake_indices(self):
+#             return self.fake_indices
+
+#     return FilteredFakeLabelMNIST(subset, new_fake_indices)
 
 
 # Обучение модели
@@ -225,8 +318,6 @@ def train_epoch_adv_v3(model, pi, attacks, optimizer, train_loader, criterion, d
         loss.backward()
         optimizer.step()
 
-        # print(ind_attack , loss)
-        # print(all_losses)
         all_losses[ind_attack] = loss.clone()
         # print(all_losses)
         if torch.all(all_losses != 0):
@@ -250,7 +341,7 @@ def train_epoch_adv_v4(model, pi, optimizer, train_loader, criterion, device, ta
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)  # Установка seed для всех GPU, если использу
     model.train()
-
+    mean_losses = []
     # losses_array = []
     if init_losses is None:
         all_losses = torch.zeros_like(pi)
@@ -258,7 +349,7 @@ def train_epoch_adv_v4(model, pi, optimizer, train_loader, criterion, device, ta
         all_losses = init_losses
 
     for traindata in tqdm(train_loader):
-        train_inputs, train_labels, train_indices = traindata
+        train_inputs, train_labels, train_indices, fake_indices = traindata
         train_labels = torch.squeeze(train_labels)
 
         model.zero_grad()        
@@ -278,10 +369,12 @@ def train_epoch_adv_v4(model, pi, optimizer, train_loader, criterion, device, ta
 
         all_losses[train_indices] = loss_default.detach().clone().sum()
 
-        pi = F.softmax( (torch.log(pi) + gamma * all_losses) / (1 + gamma * tau) - 1 )
-        # losses_array.append(all_losses.clone().detach().numpy())
-    
+        if torch.all(all_losses != 0):
+            mean_losses.append(all_losses.clone().mean().detach().numpy())
+            pi = F.softmax( (torch.log(pi) + gamma * all_losses) / (1 + gamma * tau) - 1 )
+            
     logs = dict(
+        mean_losses = mean_losses , 
         all_losses = all_losses,
         pi = pi  
     )
