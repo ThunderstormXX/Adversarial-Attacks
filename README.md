@@ -3,9 +3,7 @@
 The purpose of this experiment (./checkpoints/exp_1) is to maximize quality:
 
 $$
-\resizebox{0.37\textwidth}{!}{\ensuremath{
     \text{Accuracy} = \frac{1}{m} \sum_{i=1}^m \text{Accuracy}(\text{Attack}_i)
-    }},
 $$
 
 We train pretrained CNN on the attacked MNIST with different torchvision transforms and FGSM attack.
